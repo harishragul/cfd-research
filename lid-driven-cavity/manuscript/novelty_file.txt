@@ -1,0 +1,9 @@
+Novelty File
+
+This manuscript's new contributions, relative to existing published work on the lid-driven cavity benchmark:
+
+1. A controlled 2x2 verification comparison isolating grid arrangement from convection-scheme discretisation. Prior lid-driven cavity verification studies (including Ghia et al., 1982; Botella & Peyret, 1998; Erturk, 2009) each report a single solver configuration. This manuscript reports all four combinations of {collocated, staggered MAC} x {first-order upwind, TVD/Van Leer}, at identical Reynolds number, grid resolution, and error metric, allowing the two design choices to be compared directly rather than inferred across separate papers with different setups.
+
+2. An a priori, quantitative flux-limiter selection methodology. Rather than selecting a TVD limiter by convention, five convection schemes (upwind and four TVD limiters - minmod, Van Leer, superbee, MC) are first screened on a 1D linear advection test using both an accuracy metric (L2 error) and a monotonicity metric (overshoot/undershoot), and the limiter used in the 2D study is chosen on that quantitative basis.
+
+3. Re-examination and re-validation of a previously reported convergence difficulty. A collocated-grid TVD configuration reported in the author's earlier note (Rajaramaduraikarthik, 2026) to exhibit pressure-solver convergence difficulty is re-tested here under a controlled comparison and found to converge cleanly, achieving the lowest v-velocity error of all four configurations tested - a result discussed against the checkerboard-pressure-mode mechanism proposed for collocated grids by Rhie & Chow (1983), with the open question of whether that mechanism is genuinely absent or simply undetected by the centreline-based error metric explicitly identified.

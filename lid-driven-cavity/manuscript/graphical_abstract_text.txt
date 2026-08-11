@@ -1,0 +1,5 @@
+Effects of Grid Arrangement and Convection-Scheme Discretisation on Projection-Method Accuracy for the Lid-Driven Cavity: A Verification Study
+
+Harish Ragul Rajaramaduraikarthik*
+
+A controlled 2x2 comparison of grid arrangement (collocated vs. staggered) and convection scheme (upwind vs. TVD) for a lid-driven cavity projection-method solver shows all four configurations agree with the Ghia et al. (1982) benchmark to within 1%. A companion 1D screening study provides a quantitative basis for selecting the Van Leer flux limiter. A previously reported collocated-grid TVD convergence difficulty is re-examined and found to converge cleanly, achieving the lowest v-velocity error of the four configurations tested.
