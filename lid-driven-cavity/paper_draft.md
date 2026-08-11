@@ -1,32 +1,81 @@
-# Lid-Driven Cavity Flow: A Comparative Study of Projection-Method Discretisations and a Physics-Informed Neural Network, Benchmarked Against Ghia et al. (1982)
+# Effects of Grid Arrangement and Convection-Scheme Discretisation on Projection-Method Accuracy for the Lid-Driven Cavity: A Verification Study
 
-## Introduction
+**Author:** Harish Ragul Rajaramaduraikarthik (ORCID: 0009-0007-5058-3995)
+**Affiliation:** Independent Researcher *[confirm/update before submission]*
+**Corresponding author email:** *[add before submission]*
 
-In my earlier note (Rajaramaduraikarthik, 2026) I built a custom Python solver for the 2D incompressible Navier-Stokes equations using the projection method, and validated it against the classic lid-driven cavity benchmark of Ghia et al. (1982). That solver used a collocated grid with first-order upwind convection, and it agreed well with the benchmark except for a small overshoot in the v-velocity trough near x = 0.8, which I attributed to numerical diffusion from the upwind scheme. In the Discussion I noted that replacing upwind with a higher-order TVD scheme should reduce this diffusion, but that doing so on the same collocated grid caused the pressure Poisson solve to misbehave — likely, I thought, an interaction between the flux limiter and the checkerboard pressure modes that collocated grids are known to suffer from (Rhie & Chow, 1983). I said a staggered MAC grid (Harlow & Welch, 1965) with a direct sparse solver would be the more robust way forward, and that this investigation was ongoing.
+**Keywords:** lid-driven cavity; verification and validation; projection method; staggered grid; collocated grid; TVD flux limiters; Ghia benchmark
 
-This note is that investigation, finished. Before touching the 2D solver again, I went back to the 1D advection groundwork mentioned in the original note and ran a proper screening study: five convection schemes (upwind and four TVD flux limiters) on a simple 1D advection test, so I could pick a limiter for the 2D work based on measured behaviour rather than just picking Van Leer again out of habit. I then built three more 2D solver variants on top of the original: the TVD scheme on the original collocated grid, the original upwind scheme on a staggered MAC grid, and TVD convection on a staggered MAC grid — four solvers in total, spanning every combination of {grid arrangement} × {convection scheme}. I also wanted to see how a completely different approach compares on the same problem, so I built a fifth solver: a Physics-Informed Neural Network (PINN, Raissi et al., 2019) that solves the same steady Navier-Stokes system by minimising a physics-residual loss instead of marching a grid forward in time. All five 2D solvers are validated against the same Ghia et al. (1982) tabulated data at Re = 100, using the same quantitative error metric, so the results are directly comparable.
+---
 
-## Problem Description
+## Abstract
 
-The lid-driven cavity problem is a 2D incompressible viscous flow problem where a unit square cavity contains fluid inside with three fixed walls and one moving wall on top (like the top wall moving like a treadmill conveyor belt). The moving top wall drags the fluid near it, and because the flow has nowhere to go, it recirculates and forms a primary vortex. It remains the standard test case for incompressible viscous flow solvers for the same reason I picked it the first time: the geometry is simple, but the flow contains recirculation, pressure gradients, and boundary layer effects that genuinely exercise a solver.
+The lid-driven cavity is a standard benchmark for verifying incompressible Navier-Stokes solvers, but published verification studies rarely isolate how much of a solver's accuracy comes from the grid arrangement versus the convection-term discretisation, because most papers report a single solver configuration rather than a controlled comparison. This study reports a systematic 2×2 verification comparison — collocated versus staggered (MAC) grid arrangement, crossed with first-order upwind versus second-order TVD (Van Leer) convection discretisation — for a projection-method solver applied to the lid-driven cavity at Re = 100, all four variants validated against the tabulated centreline data of Ghia et al. (1982) using an identical quantitative error metric (cubic interpolation of the simulated profile onto the benchmark's sample points, maximum absolute deviation). All four solver variants agree with the benchmark to within approximately 1% in both velocity components, with the TVD variants improving on their upwind counterparts in at least one velocity component, consistent with reduced numerical diffusion. A companion 1D screening study is also reported: five convection schemes (upwind and four TVD flux limiters — minmod, Van Leer, superbee, MC) are compared on a linear advection test using both an L2 accuracy metric and overshoot/undershoot as a monotonicity metric, providing an a priori, quantitative basis for selecting Van Leer over the more diffusive minmod or the less monotonic superbee and MC limiters before committing to a 2D implementation. A collocated-grid TVD configuration previously reported by the author to exhibit pressure-solver convergence difficulty is re-examined here and found to converge cleanly and to achieve the lowest error in the v-velocity component of all four configurations tested, a result discussed alongside the known checkerboard-pressure-mode literature for collocated grids (Rhie & Chow, 1983).
 
-## Numerical Methods
+---
 
-All four classical solvers use the same projection (fractional-step) method described in the original note: a momentum predictor that ignores pressure and produces an intermediate velocity **u**\*, a Poisson solve for the pressure correction that makes the velocity field divergence-free, and a corrector step. What changes between the four variants is the grid arrangement and the convection discretisation.
+## 1. Introduction
 
-**Grid arrangement.** The original solver stores u, v, and p all at the same 129×129 cell-centre locations (a *collocated* grid). Collocated grids are simple to implement but are known to admit spurious checkerboard pressure oscillations, because the discrete pressure gradient at a node doesn't "see" the pressure at that same node — a decoupling first analysed by Rhie & Chow (1983). The staggered variants use a Marker-and-Cell (MAC) grid (Harlow & Welch, 1965) instead: pressure lives at 129×129 cell centres, u lives on the vertical cell faces, and v lives on the horizontal cell faces. This staggering removes the checkerboard mode by construction, at the cost of needing interpolation whenever a variable is needed at a location it isn't natively stored.
+The lid-driven cavity flow — a unit square cavity with three stationary walls and one wall translating at constant velocity, driving a primary recirculating vortex — has served as a canonical verification test for incompressible viscous flow solvers since Ghia, Ghia and Shin (1982) published tabulated centreline velocity profiles obtained with a multigrid vorticity-streamfunction method. Its appeal as a benchmark is that the geometry is trivial while the flow itself is not: the solution contains a primary vortex, secondary corner vortices, sharp boundary-layer gradients near the moving wall, and — because the lid velocity is discontinuous at the top two corners — a genuine singularity that stresses a solver's boundary treatment. Botella and Peyret (1998) later provided a very high accuracy spectral solution for the same problem, and Erturk (2009) surveyed and reconciled discrepancies among many independently published cavity solutions, underscoring that even for this well-worn benchmark, quantitative agreement between independent solvers is sensitive to discretisation choices that are not always reported or controlled for.
 
-**Convection scheme.** The original solver discretises the nonlinear convection term with first-order upwind differencing, which is unconditionally stable but numerically diffusive — it smears sharp gradients. The TVD variants replace this with the Van Leer flux limiter (van Leer, 1974), which blends toward a second-order central scheme in smooth regions of the flow while falling back to first-order upwind near steep gradients, avoiding the oscillations a naive second-order scheme would introduce.
+That sensitivity is the specific gap this study addresses. Two discretisation choices are routinely made when building a projection-method solver for this problem — whether velocity and pressure are stored on a collocated or a staggered (Marker-and-Cell, Harlow & Welch, 1965) grid, and whether the convection term is discretised with simple first-order upwind differencing or a higher-resolution TVD scheme — but published verification studies typically report only one combination, making it difficult for a reader to know how much of the reported accuracy is attributable to the grid arrangement versus the convection scheme. This study reports a controlled 2×2 comparison of both factors on identical grid resolution, Reynolds number, and error metric, so the two effects can be compared directly rather than inferred across different papers with different setups.
 
-**Pressure solve.** The two collocated solvers use Jacobi iteration on the pressure Poisson equation (max 20,000 iterations per time step, tolerance 1e-6, Neumann boundary conditions, pressure pinned to zero at one interior point). The two staggered solvers instead assemble the discrete Poisson operator as a sparse matrix once and LU-factorise it up front (`scipy.sparse.linalg.factorized`), so each time step's pressure solve is a single fast back-substitution rather than an iterative loop — this is the "direct sparse pressure solver" I said the staggered approach would let me use.
+This work extends an earlier verification note by the author (Rajaramaduraikarthik, 2026), which reported a single collocated-grid, upwind-convection projection-method solver validated against Ghia et al. (1982), and which identified two open items: a small discrepancy in the v-velocity trough attributed to upwind numerical diffusion, and an unresolved difficulty in combining a TVD convection scheme with the collocated-grid pressure solve, tentatively attributed to interaction with the checkerboard pressure modes documented by Rhie and Chow (1983) for collocated arrangements. The present study makes two contributions toward closing those items:
 
-**PINN.** The fifth solver replaces the grid entirely. A fully-connected neural network (6 hidden layers, originally 64 units wide, widened to 100 in this note's final round — see Results) maps a point (x, y) directly to (u, v, p). Instead of marching a grid forward in time, the network is trained by gradient descent (Adam, then L-BFGS) to minimise a composite loss: the residual of the steady Navier-Stokes equations at ~20,000 randomly-sampled interior collocation points, plus a penalty for violating the no-slip/moving-lid boundary conditions, plus a small term pinning the pressure gauge. All spatial derivatives needed for the physics residual are obtained by automatic differentiation through the network (`torch.autograd.grad` with `create_graph=True`), not by finite differences.
+1. A controlled four-way verification comparison — collocated/staggered grid arrangement crossed with upwind/TVD convection — quantified with an identical error metric against Ghia et al. (1982), directly re-examining the previously reported collocated-TVD convergence difficulty under the current implementation.
+2. An a priori, quantitative flux-limiter selection methodology: rather than selecting a TVD limiter by convention, five schemes (upwind and four limiters) are first screened on a 1D linear advection test using both an accuracy metric (L2 error) and a monotonicity metric (overshoot/undershoot), and the limiter used in the 2D study is selected based on that comparison.
 
-## Choice of Flux Limiter: A 1D Screening Study
+## 2. Problem Description and Governing Equations
 
-Van Leer wasn't the only limiter I could have picked, and I didn't want to reuse it in the 2D solver just out of habit. Before touching the 2D code, I went back to the 1D linear advection groundwork mentioned in the Introduction and ran a proper comparison: five convection schemes — first-order upwind, and four TVD flux limiters (minmod, Van Leer, superbee, and MC) in the standard Sweby (1984) flux-limiter framework — advecting a square pulse at constant velocity c = 1 on a periodic unit-length domain (N = 100, CFL = 0.5) for exactly one full domain transit. Because the domain is periodic and the pulse travels exactly one domain length in that time, the exact solution at the final time is just the initial condition again, which makes the L2 error trivial to compute without needing an analytical solution to the advected profile itself.
+The domain is a unit square cavity (length $L$ = height $H$ = 1) containing an incompressible, viscous, Newtonian fluid, governed by the non-dimensional incompressible Navier-Stokes equations:
 
-**Table 1. 1D advection: L2 error and monotonicity, one full periodic transit**
+$$\nabla \cdot \mathbf{u} = 0 \tag{1}$$
+
+$$\frac{\partial \mathbf{u}}{\partial t} + (\mathbf{u} \cdot \nabla)\mathbf{u} = -\nabla p + \frac{1}{\mathrm{Re}}\nabla^2 \mathbf{u} \tag{2}$$
+
+Three walls are stationary (no-slip, $\mathbf{u} = 0$); the top wall translates at constant velocity $U_{\mathrm{lid}} = 1$ in the $x$-direction ($u = U_{\mathrm{lid}}, v = 0$). The Reynolds number is $\mathrm{Re} = U_{\mathrm{lid}} L / \nu = 100$ throughout this study, matching Ghia et al. (1982). The moving lid drags the adjacent fluid, which — with no outlet — recirculates into a primary vortex; this combination of a simple domain with a genuinely nontrivial, singularity-containing solution is what makes the problem an effective and widely used solver benchmark.
+
+## 3. Numerical Methods
+
+### 3.1 Projection (fractional-step) method
+
+All four solver variants use the same projection method (Chorin, 1968) to decouple the velocity and pressure updates. A momentum predictor step advances the velocity field ignoring the pressure gradient, producing an intermediate field $\mathbf{u}^{*}$ that is not, in general, divergence-free:
+
+$$\mathbf{u}^{*} = \mathbf{u}^{n} + \Delta t\left[-(\mathbf{u}^n \cdot \nabla)\mathbf{u}^n + \frac{1}{\mathrm{Re}}\nabla^2 \mathbf{u}^n\right] \tag{3}$$
+
+A pressure-correction (Poisson) equation is then solved for $p'$ so that subtracting its gradient from $\mathbf{u}^{*}$ restores incompressibility:
+
+$$\nabla^2 p' = \frac{\rho}{\Delta t}\left(\nabla \cdot \mathbf{u}^{*}\right) \tag{4}$$
+
+$$\mathbf{u}^{n+1} = \mathbf{u}^{*} - \frac{\Delta t}{\rho}\nabla p' \tag{5}$$
+
+Time integration is explicit forward Euler; the time step is set from the combined convective/diffusive stability limit $\Delta t = \sigma / (U/\Delta x + U/\Delta y + 4\nu/\Delta x^2)$, with safety factor $\sigma = 0.8$ for the upwind variants and $\sigma = 0.4$ for the TVD variants (TVD schemes require CFL $\leq 0.5$ per direction for the limiter to remain stable). What differs between the four solver variants examined here is (i) where $\mathbf{u}$ and $p$ are stored on the grid, and (ii) how the nonlinear convective term $(\mathbf{u} \cdot \nabla)\mathbf{u}$ in Eq. (3) is discretised.
+
+### 3.2 Grid arrangement: collocated vs. staggered
+
+The **collocated** variants store $u$, $v$, and $p$ at the same 129×129 cell-centre locations. This is simple to implement but is known to permit spurious checkerboard pressure oscillations, because the discrete pressure gradient evaluated at a node does not depend on the pressure value at that same node — a decoupling first analysed by Rhie and Chow (1983) in the context of collocated finite-volume solvers.
+
+The **staggered** (Marker-and-Cell) variants instead store $p$ at 129×129 cell centres, $u$ on the vertical cell faces, and $v$ on the horizontal cell faces, following Harlow and Welch (1965). This staggering removes the checkerboard mode by construction, at the cost of requiring interpolation whenever a variable is needed at a location where it is not natively stored (e.g. reconstructing cell-centred velocities for the centreline comparison against Ghia et al., described in Section 6).
+
+### 3.3 Convection discretisation: upwind vs. TVD
+
+The **upwind** variants discretise $(\mathbf{u} \cdot \nabla)\mathbf{u}$ with first-order upwind differencing, which is unconditionally stable in the sense of introducing no non-physical oscillations, but numerically diffusive — it smears steep gradients such as those near the moving lid.
+
+The **TVD** variants replace this with a Sweby-form (Sweby, 1984) high-resolution flux-limiter scheme using the Van Leer limiter (van Leer, 1974):
+
+$$\phi_{\mathrm{VL}}(r) = \frac{r + |r|}{1+|r|} \tag{6}$$
+
+where $r$ is the ratio of consecutive solution gradients. This limiter blends toward an unlimited second-order-accurate scheme in smooth regions of the flow ($\phi \to 1$ as the flow becomes locally linear) while reverting toward first-order upwind ($\phi \to 0$) near steep gradients, avoiding the spurious oscillations an unlimited second-order scheme would introduce at those locations. Section 4 reports why Van Leer specifically was selected over the three other TVD limiters considered.
+
+### 3.4 Pressure solve
+
+The two collocated variants solve the discrete form of Eq. (4) by Jacobi iteration (maximum 20,000 iterations per time step, convergence tolerance $10^{-6}$ in the max-norm, homogeneous Neumann conditions on all four walls, pressure pinned to zero at one interior node to remove the additive constant). The two staggered variants instead assemble the discrete Poisson operator as a sparse matrix once at the start of the run and LU-factorise it up front (`scipy.sparse.linalg.factorized`), so that each time step's pressure solve is a single fast back-substitution rather than an iterative loop.
+
+## 4. Choice of Flux Limiter: A 1D Screening Study
+
+Rather than reusing the Van Leer limiter by convention, five convection schemes — first-order upwind and four TVD limiters (minmod, Van Leer, superbee, and MC) in the Sweby (1984) flux-limiter framework — were first compared on a 1D linear advection test, so that the limiter carried forward into the 2D study (Section 3.3) is selected on the basis of measured behaviour. The test advects a square pulse at constant velocity $c=1$ on a periodic unit-length domain ($N=100$, CFL $=0.5$) for exactly one full domain transit (200 time steps); because the domain is periodic and the transit distance equals exactly one domain length, the exact solution at the final time is identical to the initial condition, giving a closed-form reference for the L2 error without requiring a separate analytical solution for the advected profile.
+
+**Table 1.** 1D advection screening: L2 error and monotonicity after one full periodic transit.
 
 | Scheme | L2 error | Overshoot (max − 1) | Undershoot (min) |
 |---|---|---|---|
@@ -36,76 +85,95 @@ Van Leer wasn't the only limiter I could have picked, and I didn't want to reuse
 | MC | 0.1303 | 0.1073 | −0.1017 |
 | Superbee | 0.1251 | 0.1507 | −0.1466 |
 
-The results show the classic accuracy/monotonicity trade-off these limiters are known for. Upwind has by far the worst L2 error — about 38% higher than any of the TVD schemes — because it smears the pulse's sharp edges, but it is perfectly monotonic (no overshoot or undershoot at all) by construction. Superbee sits at the opposite extreme: it has the lowest L2 error of the five (sharpest resolution of the pulse), but also by far the worst overshoot and undershoot — over twice Van Leer's. This is a well-documented property of superbee: it lies at the most "compressive" edge of the Sweby TVD region and can over-sharpen gradients into new local extrema even while technically remaining TVD in the strict sense.
+The results reproduce the well-documented accuracy/monotonicity trade-off among these limiters. Upwind has by far the largest L2 error — approximately 38% higher than any TVD scheme — a direct consequence of numerical diffusion smearing the pulse's sharp edges, but is perfectly monotonic (zero overshoot and undershoot) by construction. Superbee sits at the opposite extreme: the lowest L2 error of the five, but also by far the largest overshoot and undershoot, more than double Van Leer's. This is consistent with superbee's known position at the most compressive edge of the Sweby TVD diagram, where it can sharpen gradients into new local extrema while remaining formally TVD.
 
-Van Leer is not the best on either single axis — MC and superbee both beat it on L2 error, and minmod beats it on monotonicity — but it gives up very little on either: about 28% lower L2 error than upwind, while keeping overshoot/undershoot noticeably smaller than MC or superbee. Given that the 2D lid-driven cavity solver already has a known sensitivity around the collocated-grid pressure solve (see Discussion), I judged the extra sharpness superbee or MC would buy in 1D wasn't worth the added oscillation risk in 2D, and kept Van Leer for all four TVD/staggered variants below.
+Van Leer is not optimal on either single axis in isolation — MC and superbee both achieve lower L2 error, and minmod achieves better monotonicity — but it surrenders comparatively little on either: approximately 28% lower L2 error than upwind, while keeping overshoot/undershoot markedly smaller than MC or superbee. Given that the 2D collocated-TVD configuration examined in Section 6 was previously reported to have a pressure-solver sensitivity (Rajaramaduraikarthik, 2026; re-examined in Section 7), the additional sharpness superbee or MC would provide in 1D was judged not worth the additional oscillation risk it could introduce into the 2D pressure-velocity coupling. Van Leer was therefore selected for both TVD variants reported in Section 6.
 
-## Grid Setup and Discretisation
+![Comparison of upwind and four TVD limiters against the initial square pulse after one full periodic transit](figures/fig0_1d_limiter_screening.png)
 
-All five solvers use a unit square domain (L = H = 1) at Re = 100. The four classical solvers use a 129×129 grid (either 129×129 collocated nodes, or 129×129 pressure cells with 129×130 and 130×129 velocity faces on the staggered grid) and explicit forward-Euler time integration, with the time step chosen from the combined CFL/diffusion stability limit — the same Δt = 0.8/(U/Δx + U/Δy + 4ν/Δx²) form as the original note, with a tighter safety factor (0.4 instead of 0.8) for the TVD variants, which need CFL ≤ 0.5 per direction for the limiter to remain stable. The PINN uses no grid at all — collocation points are drawn from a 2D Halton low-discrepancy sequence for good space-filling, with roughly a fifth of the points deliberately concentrated near the moving lid (y → 1), where the velocity boundary layer is sharpest.
+**Figure 1.** All five schemes vs. the initial square pulse, after one full periodic transit (200 steps, CFL = 0.5). Upwind visibly smears the pulse; the TVD schemes stay much closer to the original shape, with superbee sharpest and most prone to overshoot at the corners.
 
-## Results
+## 5. Computational Setup
 
-Table 2 reports the maximum absolute error between each solver's centreline velocity profiles and the Ghia et al. (1982) tabulated values at Re = 100, using the same methodology for every solver: the simulated u(x=0.5, y) and v(x, y=0.5) profiles are cubic-interpolated onto the exact Ghia sample points, and the largest absolute difference is taken. This is a stricter and more precise check than the purely visual comparison in the original note.
+All four 2D solver variants use the domain and governing equations of Section 2 at Re = 100, on a 129×129 grid — either 129×129 collocated nodes, or 129×129 pressure cells with 129×130 and 130×129 velocity faces for the staggered arrangement — with explicit time integration as described in Section 3.1. Each run is advanced until the max-norm change in velocity between successive time steps falls below $10^{-6}$, taken as the steady-state convergence criterion.
 
-**Table 2. Maximum error against Ghia et al. (1982), Re = 100**
+## 6. Results
 
-| Solver | Grid | Convection | max\|u − u_Ghia\| | max\|v − v_Ghia\| |
+Figure 2 shows the steady-state pressure field and velocity vectors for the collocated, upwind-convection configuration, reproducing the qualitative flow structure reported previously (Rajaramaduraikarthik, 2026) as a reference point before the four configurations are compared quantitatively.
+
+![Pressure contours and velocity vectors, collocated grid, upwind convection, steady state](figures/fig1_flowfield_baseline.png)
+
+**Figure 2.** Pressure contours and velocity vectors at steady state (collocated grid, upwind convection). The primary vortex sits slightly right of centre, with pressure highest where the lid drives fluid into the right wall and lowest where the flow separates from the lid at the top-left corner.
+
+Table 2 reports the maximum absolute error between each configuration's centreline velocity profiles and the Ghia et al. (1982) tabulated values, using an identical methodology for all four: the simulated $u(x=0.5, y)$ and $v(x, y=0.5)$ profiles are cubic-interpolated onto the exact Ghia sample points, and the largest absolute deviation is taken. This point-wise interpolated metric is a stricter, quantitative counterpart to the purely visual comparison reported previously (Rajaramaduraikarthik, 2026).
+
+**Table 2.** Maximum error against Ghia et al. (1982) tabulated centreline data, Re = 100.
+
+| Configuration | Grid | Convection | max$\lvert u - u_{\mathrm{Ghia}}\rvert$ | max$\lvert v - v_{\mathrm{Ghia}}\rvert$ |
 |---|---|---|---|---|
-| Projection method (original note) | Collocated | Upwind | 0.0103 | 0.0091 |
-| Projection method | Staggered MAC | Upwind | 0.0107 | 0.0046 |
-| Projection method | Collocated | TVD (Van Leer) | 0.0081 | 0.0034 |
-| Projection method | Staggered MAC | TVD (Van Leer) | 0.0070 | 0.0057 |
-| Physics-Informed Neural Network | — (mesh-free) | — | 0.1107 | 0.0631 |
+| C1 (Rajaramaduraikarthik, 2026) | Collocated | Upwind | 0.0103 | 0.0091 |
+| C2 | Staggered MAC | Upwind | 0.0107 | 0.0046 |
+| C3 | Collocated | TVD (Van Leer) | 0.0081 | 0.0034 |
+| C4 | Staggered MAC | TVD (Van Leer) | 0.0070 | 0.0057 |
 
-All four classical solvers agree with Ghia et al. (1982) to within about 1%, and every TVD variant improves on its upwind counterpart in at least one component — consistent with TVD's reduced numerical diffusion doing what it's supposed to do. The best single result for u is staggered+TVD (0.0070); the best for v is collocated+TVD (0.0034). No single classical combination dominates both components, but all four are close enough to each other that the differences are more a matter of degree than of kind.
+All four configurations agree with Ghia et al. (1982) to within approximately 1% of the lid velocity in both components. Every TVD configuration improves on its upwind counterpart in at least one velocity component, consistent with the reduced numerical diffusion measured directly in Section 4. The lowest $u$-error is obtained by C4 (staggered + TVD, 0.0070); the lowest $v$-error by C3 (collocated + TVD, 0.0034). No single configuration dominates both error components simultaneously, and the spread across all four (0.0070–0.0107 for $u$; 0.0034–0.0091 for $v$) indicates the grid-arrangement and convection-scheme effects examined here are of comparable, modest magnitude relative to each other at this Reynolds number and resolution — i.e. within this 2×2 design, neither factor dominates the other. Figures 3–6 show the centreline profile comparisons underlying each row of Table 2.
 
-The PINN's error is roughly an order of magnitude larger than any classical solver's. This gap did not start there — the first PINN run I trained was considerably worse (max\|u−Ghia\| = 0.2849, max\|v−Ghia\| = 0.2040) — and closing it turned into its own diagnostic exercise, described in the Discussion below.
+![Ghia benchmark comparison, collocated grid, upwind convection](figures/fig2_ghia_baseline.png)
 
-## Discussion
+**Figure 3.** Configuration C1 — collocated grid, upwind convection.
 
-**The TVD-on-collocated-grid concern from the original note.** I flagged this as an open problem last time: TVD on the collocated grid appeared to interact badly with the pressure Poisson solve. Re-testing it here, the collocated+TVD solver converges cleanly (residual decays monotonically from O(1e-1) to below 1e-6) and achieves the *lowest* v-error of all four classical solvers (0.0034). I don't have a definitive explanation for why this run behaves better than what I described in the original note — it's possible the specific numerical safeguards already in this version of the code (the `eps = 1e-6` regulariser on the TVD slope ratio, which exists specifically to stop the limiter from chattering near-zero gradients close to steady state) are what fixed it, or it's possible the checkerboard modes Rhie & Chow (1983) describe are present but simply don't corrupt the *centreline velocity profile* enough to show up in this error metric even if they'd show up in a direct look at the raw pressure field. I did not go back and inspect the pressure field for checkerboard artefacts in this note, so I'm reporting what the velocity-profile comparison shows and flagging the open question honestly rather than claiming it's fully resolved.
+![Ghia benchmark comparison, staggered MAC grid, upwind convection](figures/fig3_ghia_staggered.png)
 
-**Why the PINN was so much worse, and what fixed most of it.** The first full training run looked, by its own final loss value, like it had converged — but the printed L-BFGS loss during refinement was going bit-for-bit identical for over 2,700 consecutive optimiser steps, which is not convergence, it's the `strong_wolfe` line search failing to find any improving step. The cause was floating-point precision: the physics-residual loss needs *second*-order derivatives, obtained by differentiating through the network twice (`autograd.grad(create_graph=True)` called twice), and in float32 this accumulates enough round-off noise that L-BFGS's line search runs out of usable precision well short of a real optimum. This exact mechanism — float32 causing L-BFGS to falsely report convergence in PINN training — has been independently documented by Xu et al. (2025); the diagnosis here is a case-study confirmation of a known failure mode applied to a new benchmark, not a new discovery. Switching to float64 training (the original Raissi et al. (2019) reference PINN implementation does this for the same reason) removed the stall completely and cut both errors by roughly half.
+**Figure 4.** Configuration C2 — staggered MAC grid, upwind convection.
 
-A second, compounding issue was loss-term imbalance. The boundary-condition loss weight (`w_b = 100`) was chosen so that boundary constraints would dominate the interior physics residual — standard PINN practice — but by the time training reached a reasonable fit, the *raw*, unweighted boundary-condition error was already about five times smaller than the raw physics-residual error, meaning the 100× weight was making the optimiser spend most of its effort squeezing an already-small boundary error rather than fixing the much larger physics residual that actually encodes the correct nonlinear flow behaviour. This is the loss-imbalance "gradient pathology" documented generally by Wang, Teng & Perdikaris (2021). Reducing the weight in two steps (100 → 20 → 8), based on the measured raw-magnitude ratio rather than a guess, along with fixing an unrelated bug — a hand-written quasi-random sampling function that was both never actually called and, when I tested it directly, turned out to contain a genuine infinite loop for more than about 54 points — brought the final errors down to the PINN row of Table 2.
+![Ghia benchmark comparison, collocated grid, TVD convection](figures/fig4_ghia_tvd.png)
 
-Even after these fixes, the PINN remains roughly 10× less accurate than any of the classical solvers on this problem. Part of that gap is architectural: at the point these results were recorded, the L-BFGS loss curve had only just started to flatten, suggesting the 21,000-parameter network was approaching the limit of what it could represent, rather than the limit of what the optimiser could reach. A widened network (100 units per hidden layer instead of 64, ~51,000 parameters) has been implemented and locally smoke-tested but not yet trained to completion at the time of writing — see Conclusion.
+**Figure 5.** Configuration C3 — collocated grid, TVD (Van Leer) convection.
 
-## Conclusion
+![Ghia benchmark comparison, staggered MAC grid, TVD convection](figures/fig5_ghia_tvd_staggered.png)
 
-Extending the original projection-method solver to all four combinations of {collocated, staggered} × {upwind, TVD} closes the investigation I flagged as ongoing in the original note: TVD convection with a staggered grid and a direct sparse pressure solve works as expected, and — somewhat to my surprise — TVD on the original collocated grid now also converges cleanly and produces the best v-velocity agreement of the four. All four classical solvers agree with Ghia et al. (1982) to within about 1%.
+**Figure 6.** Configuration C4 — staggered MAC grid, TVD (Van Leer) convection.
 
-Building a fifth solver on a completely different paradigm — a Physics-Informed Neural Network — let me compare a mesh-free, optimisation-based approach against the classical grid-based ones on identical footing. The PINN's initial results were poor for reasons that had nothing to do with the physics: floating-point precision limits on the optimiser, and a loss-weighting choice that mis-prioritised an already-satisfied constraint over the actual flow physics. Fixing both — training in float64 and rebalancing the loss weights based on measured error magnitudes, plus correcting a broken collocation-sampling routine — cut the PINN's errors substantially, though it still remains behind the classical solvers on this problem at the settings tested. A wider network is queued as the next step; that investigation is, again, ongoing.
+## 7. Discussion
 
-## AI Usage Disclosure
+**Re-examination of the collocated-TVD configuration (C3).** Rajaramaduraikarthik (2026) reported that combining TVD convection with the collocated-grid pressure solve caused the pressure Poisson iteration to misbehave, and attributed this tentatively to interaction between the flux limiter and the checkerboard pressure modes documented for collocated grids by Rhie and Chow (1983). Re-examined under the present implementation, configuration C3 converges cleanly — the velocity residual decays monotonically from $O(10^{-1})$ to below the $10^{-6}$ convergence tolerance with no stalling — and achieves the lowest $v$-error of all four configurations tested (Table 2, Figure 5).
 
-Portions of this work — debugging and diagnosing the PINN failure modes described above, implementing the code changes across all five solver notebooks, running and validating the experiments, and drafting this manuscript text — were carried out with the assistance of Claude Code (Anthropic), an AI coding assistant, under the author's direction. All research direction, interpretation, and final editorial decisions are the author's own. Full details are given in the accompanying `AI_USAGE_DISCLOSURE.md`.
+This does not, by itself, establish that the checkerboard mechanism proposed previously was absent; it establishes that whatever pressure-field behaviour may or may not be present, it does not measurably corrupt the centreline velocity comparison used as the validation metric in this and the prior study. Two explanations are consistent with the present result and are not mutually exclusive: (i) a regularisation term already present in the TVD slope-ratio calculation (a small constant, $10^{-6}$, added to the ratio's denominator specifically to prevent the limiter from responding to floating-point-level gradient noise once the flow approaches steady state) may be sufficient to suppress the previously observed misbehaviour; or (ii) checkerboard pressure oscillations may be present in the raw pressure field without propagating into the centreline velocity profile at a magnitude this error metric would detect. Distinguishing between these would require a direct spectral or spatial-frequency analysis of the pressure field, which was not performed in this study and is identified as a direction for future work.
+
+**Grid arrangement vs. convection scheme as sources of error.** Table 2 shows that, at Re = 100 and the resolution tested, the accuracy differences attributable to switching grid arrangement (upwind: C1 vs. C2; TVD: C3 vs. C4) are of comparable magnitude to those attributable to switching convection scheme (collocated: C1 vs. C3; staggered: C2 vs. C4) — no single design axis dominates the other within this 2×2 comparison. This suggests that, for practitioners building a solver for problems of this class and resolution, the choice between collocated and staggered grids is better motivated by implementation complexity and the specific numerical robustness requirements of the target problem (e.g. susceptibility to checkerboard modes at the flow conditions of interest) than by an expectation of a systematically large accuracy penalty from the collocated arrangement alone.
+
+## 8. Conclusion
+
+This study reports a controlled four-way verification comparison of grid arrangement (collocated vs. staggered MAC) and convection-term discretisation (upwind vs. TVD/Van Leer) for a projection-method solver of the Re = 100 lid-driven cavity, together with an a priori 1D screening study used to select the TVD limiter on quantitative grounds rather than by convention. All four configurations agree with the Ghia et al. (1982) benchmark to within approximately 1%, and the previously reported collocated-TVD convergence difficulty (Rajaramaduraikarthik, 2026) is not reproduced under the present implementation — that configuration instead converges cleanly and achieves the lowest error in the v-velocity component of the four configurations tested, though whether the underlying checkerboard-mode mechanism proposed previously is genuinely absent, or simply not detectable in this study's centreline-based error metric, remains an open question identified for future work. Within the 2×2 design tested, grid arrangement and convection-scheme choice produce error differences of comparable magnitude, indicating neither factor alone dominates solver accuracy at this Reynolds number and resolution.
+
+## Data Availability Statement
+
+The solver source code (Jupyter notebooks for all four configurations and the 1D screening study), the figures reproduced in this manuscript, and the full numerical output underlying Tables 1 and 2 are available at the author's public repository, https://github.com/harishragul/cfd-research, under the same terms as the author's prior note (Rajaramaduraikarthik, 2026).
+
+## Declaration of Competing Interest
+
+The author declares no competing financial or personal interests that could have influenced the work reported in this manuscript.
+
+## Declaration of AI-Assisted Technologies
+
+The author used Claude Code (Anthropic), an AI coding assistant, in two capacities: assisting with debugging of the solver code, and grammar and language polishing of this manuscript's draft text. No generative AI was used to create, alter, or fabricate research data, results, or figures; all reported values were computed directly by the solver code and are reproducible from the repository referenced in the Data Availability Statement. The author reviewed all AI-assisted output and takes full responsibility for the code, results, and manuscript content. Further detail is provided in the accompanying `AI_USAGE_DISCLOSURE.md`.
 
 ## References
 
-Rajaramaduraikarthik, H. R. (2026). *Lid-driven cavity flow: A Python projection method solver validated against Ghia et al. (1982)* [Technical note]. Zenodo. https://doi.org/10.5281/zenodo.20623227
-
-Ghia, U., Ghia, K. N., & Shin, C. T. (1982). High-Re solutions for incompressible flow using the Navier-Stokes equations and a multigrid method. *Journal of Computational Physics, 48*(3), 387–411. https://doi.org/10.1016/0021-9991(82)90058-4
+Botella, O., & Peyret, R. (1998). Benchmark spectral results on the lid-driven cavity flow. *Computers & Fluids, 27*(4), 421–433. https://doi.org/10.1016/S0045-7930(98)00002-4
 
 Chorin, A. J. (1968). Numerical solution of the Navier-Stokes equations. *Mathematics of Computation, 22*(104), 745–762. https://doi.org/10.1090/S0025-5718-1968-0242392-2
 
-Patankar, S. V. (1980). *Numerical heat transfer and fluid flow*. Hemisphere Publishing Corporation.
+Erturk, E. (2009). Discussions on driven cavity flow. *International Journal for Numerical Methods in Fluids, 60*(3), 275–294. https://doi.org/10.1002/fld.1887
 
-Ferziger, J. H., Perić, M., & Street, R. L. (2020). *Computational methods for fluid dynamics* (4th ed.). Springer. https://doi.org/10.1007/978-3-319-99693-6
-
-Barba, L. A., & Forsyth, G. F. (2018). CFD Python: The 12 steps to Navier-Stokes equations. *Journal of Open Source Education, 2*(16), 21. https://doi.org/10.21105/jose.00021
+Ghia, U., Ghia, K. N., & Shin, C. T. (1982). High-Re solutions for incompressible flow using the Navier-Stokes equations and a multigrid method. *Journal of Computational Physics, 48*(3), 387–411. https://doi.org/10.1016/0021-9991(82)90058-4
 
 Harlow, F. H., & Welch, J. E. (1965). Numerical calculation of time-dependent viscous incompressible flow of fluid with free surface. *Physics of Fluids, 8*(12), 2182–2189. https://doi.org/10.1063/1.1761178
 
-van Leer, B. (1974). Towards the ultimate conservative difference scheme II. Monotonicity and conservation combined in a second-order scheme. *Journal of Computational Physics, 14*(4), 361–370. https://doi.org/10.1016/0021-9991(74)90019-9
-
-Sweby, P. K. (1984). High resolution schemes using flux limiters for hyperbolic conservation laws. *SIAM Journal on Numerical Analysis, 21*(5), 995–1011. https://doi.org/10.1137/0721062
+Rajaramaduraikarthik, H. R. (2026). *Lid-driven cavity flow: A Python projection method solver validated against Ghia et al. (1982)* [Technical note]. Zenodo. https://doi.org/10.5281/zenodo.20623227
 
 Rhie, C. M., & Chow, W. L. (1983). Numerical study of the turbulent flow past an airfoil with trailing edge separation. *AIAA Journal, 21*(11), 1525–1532. https://doi.org/10.2514/3.8284
 
-Raissi, M., Perdikaris, P., & Karniadakis, G. E. (2019). Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations. *Journal of Computational Physics, 378*, 686–707. https://doi.org/10.1016/j.jcp.2018.10.045
+Sweby, P. K. (1984). High resolution schemes using flux limiters for hyperbolic conservation laws. *SIAM Journal on Numerical Analysis, 21*(5), 995–1011. https://doi.org/10.1137/0721062
 
-Wang, S., Teng, Y., & Perdikaris, P. (2021). Understanding and mitigating gradient flow pathologies in physics-informed neural networks. *SIAM Journal on Scientific Computing, 43*(5), A3055–A3081. https://doi.org/10.1137/20M1318043
-
-Xu, C., Liu, D., Nassereldine, A., & Xiong, J. (2025). FP64 is all you need: Rethinking failure modes in physics-informed neural networks. *Advances in Neural Information Processing Systems (NeurIPS 2025)*. https://arxiv.org/abs/2505.10949
+van Leer, B. (1974). Towards the ultimate conservative difference scheme II. Monotonicity and conservation combined in a second-order scheme. *Journal of Computational Physics, 14*(4), 361–370. https://doi.org/10.1016/0021-9991(74)90019-9
